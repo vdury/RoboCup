@@ -12,6 +12,8 @@ using namespace cv;
 
 double get_mean(vector<int> v) {
   double sum = 0.0;
+  if (v.size() == 0)
+    return 10000;
   for(int i = 0; i < v.size(); ++i)
     sum += v[i];
   
@@ -19,11 +21,13 @@ double get_mean(vector<int> v) {
 }
 
 double get_variance(vector<int> v) {
+  if (v.size() == 0)
+    return 10000;
   double mean = get_mean(v);
   double temp = 0;
   for(int i = 0; i < v.size(); ++i)
     temp += (mean - v[i]) * (mean - v[i]);
-  return temp/v.size();
+  return sqrt(temp/v.size());
 }
 
 int _find(int p, int* roots) {
@@ -53,7 +57,7 @@ int _add(int p, int r, int* roots) {
   return roots[p];
 }
 
-void labeling(Mat ims) {
+void labeling(Mat ims, Mat se) {
 
   if(!ims.data){
     cerr<<"Image not found, exit"<<endl;
@@ -106,43 +110,82 @@ void labeling(Mat ims) {
   cv::Mat imd(ims.rows, ims.cols, CV_8UC3);
   cv::Vec3b color[l];
   for (int i = 0; i < l; i++)
-    color[i] = cv::Vec3b(rand()%256, rand()%256, rand()%256);
-  for (int i = 0; i < rows; i++)
-    for (int j = 0; j < cols; j++)
-      imd.at<cv::Vec3b>(i, j) = color[roots[i*cols+j]];
-
+    color[i] = Vec3b(rand()%256, rand()%256, rand()%256);
 
   vector< vector<Point> > component_list(l);
   for (int i = 0; i < rows; i++)
     for (int j = 0; j < cols; j++) {
       component_list[roots[i*cols+j]].push_back(Point(i,j));
     }
-  
+	
   for(int i = 0; i < l; i++) {
-    vector<int> right_border(ims.rows);
-    vector<int> left_border(ims.rows);
+    vector<int> right_border(ims.rows, 0);
+    vector<int> left_border(ims.rows, ims.cols + 1);
+    vector<int> top_border(ims.cols, ims.rows + 1);
+    vector<int> bottom_border(ims.cols, 0);
+    
     vector<int> vertical;
+    vector<int> horizontal;
+    
+    int max_v = 0;
+    int max_h = 0;
+    int min_v = ims.rows;
+    int min_h = ims.cols;
+
+
     for(vector<Point>::iterator it = component_list[i].begin(); it != component_list[i].end(); it++){
       Point p = *it;
       right_border[p.x] = max(right_border[p.x], p.y);
       left_border[p.x] = min(left_border[p.x], p.y);
       
-    }
-    for(int j = 0; j < ims.rows; ++j) {
-      if(right_border[j] and left_border[j]) {
-	vertical.push_back(right_border[j] - left_border[j]); }
-    }
-    double var = get_variance(vertical);
-    double mean = get_mean(vertical);
-    cout<<"component["<<i<<"] of color "<<color[i]<<endl
-	<<"\t"<<"variance: "<<var<<endl
-	<<"\t"<<"mean: "<<mean
-	<<endl;
-  }
+      bottom_border[p.y] = max(bottom_border[p.y], p.x);
+      top_border[p.y] = min(top_border[p.y], p.x);
+    
+      max_v = max(max_v, p.x);
+      min_v = min(min_v, p.x);
+      max_h = max(max_h, p.y);
+      min_h = min(min_h, p.y);
 
+    }
+    
+    for(int j = min_v; j < max_v+1; ++j) {
+      //if(right_border[j] and left_border[j]) {
+	vertical.push_back(abs(right_border[j] - left_border[j])); 
+	//}
+    }
+    for(int j = min_h; j < max_h+1; ++j) {
+      //  if(top_border[j] and bottom_border[j]) {
+    	horizontal.push_back(abs(bottom_border[j] - top_border[j])); 
+	//   }
+    }
+    double var_horizontal  = get_variance(vertical);
+    double mean_horizontal = get_mean(vertical);
+    double var_vertical    = get_variance(horizontal);
+    double mean_vertical   = get_mean(horizontal);
+
+    cout<<"component["<<i<<"] of color "<<color[i]<<endl
+	<<"\t"<<"mean_v: "<<mean_vertical
+	<<"\t"<<"mean_h : "<<mean_horizontal<<endl
+	<<"\t"<<"var_v: "<<var_vertical
+	<<"\t"<<"var_h: "<<var_horizontal
+	<<endl;
+
+    float ratio = mean_vertical / mean_horizontal;
+    if(var_horizontal > 40 || ratio < 3) {
+      for (int k = 0; k < rows; k++)
+    	for (int j = 0; j < cols; j++) {
+	  if(roots[k*cols+j] == i)
+	    color[roots[k*cols+j]] = Vec3b(255, 255, 255);
+	}
+    }
+  }
+  for (int i = 0; i < rows; i++)
+    for (int j = 0; j < cols; j++)
+      imd.at<Vec3b>(i, j) = color[roots[i*cols+j]];
   
+  morphologyEx(imd, imd, MORPH_OPEN, se);  
   cout<<"labeling: "<< l << " components detected"<<endl;
-  cv::imshow("colored image", imd); cv::waitKey(0);
+  imshow("colored image", imd); 
 
   delete [] roots;
 }
@@ -176,9 +219,11 @@ void process(const char* ims_name, const char* se_name, const unsigned char thre
   //  dilate(cr, d, se);
   morphologyEx(cr, d, MORPH_CLOSE, se);
 
-  for(int i = 10; i < 130; i+=5){
+  for(int i = 35; i < 91; i+=5){
     threshold(d, th, i, max_BINARY_value, THRESH_BINARY_INV);
-    labeling(th);
+    labeling(th, se);
+    cout<<"threshold: "<<i<<endl;
+    cv::waitKey(0);
   }
   
   while(1){
